@@ -1,0 +1,45 @@
+version: "3.3"
+services:
+    database:
+        build:
+            context: .
+            dockerfile: docker/database/Dockerfile
+        volumes:
+            - .:/code
+            - ../../data:/data
+        network_mode: host
+        extra_hosts:
+          - "iridium_extractor:127.0.0.1"
+        environment:
+            - DB_FILE=/data/db.sqlite3
+            - ZMQ_ADDRESS_IQ=tcp://*:5559
+            - ZMQ_ADDRESS_BYTES=tcp://*:5560
+            - ARGS=--filter-matching --filter-ira --buffer-size 1024
+        tty: true
+        entrypoint: ["/code/database/entrypoint.sh"]
+    iridium_extractor:
+        build:
+            context: .
+            dockerfile: docker/iridium_extractor/Dockerfile
+        volumes:
+            - .:/code
+#        devices:
+#            - "/dev/bus/usb/002/004:/dev/bus/usb/002/004"
+        network_mode: host
+        ulimits:
+          rtprio: 99
+        extra_hosts:
+          - "database:127.0.0.1"
+        environment:
+            - ZMQ_ADDRESS_IQ=tcp://database:5559
+            - ZMQ_ADDRESS_BYTES=tcp://database:5560
+            - MULTIPLIER=25
+            - PARALLELISM=7
+            - GAIN=80
+            - BURST_THRESHOLD=34
+        stdin_open: true
+        tty: true
+        entrypoint: ["/bin/bash", "/code/iridium_extractor/entrypoint.sh"]
+        restart: on-failure
+        depends_on:
+            - database
