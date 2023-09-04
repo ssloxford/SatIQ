@@ -3,9 +3,10 @@
 This repository contains all the data collection, model training, and analysis code for the `SatIQ` system, described in the paper "Watch This Space: Securing Satellite Communication through Resilient Transmitter Fingerprinting".
 This system can be used to authenticate Iridium satellite transmitters using high sample rate message headers.
 
-The full dataset can be found at the following URL: https://zenodo.org/record/8220494
-
-The trained model weights can be found at the following URL: https://zenodo.org/record/8298532
+Additional materials:
+- Paper (arXiv preprint): https://arxiv.org/abs/2305.06947
+- Full dataset (Iridium message headers): https://zenodo.org/record/8220494
+- Trained model weights: https://zenodo.org/record/8298532
 
 When using this code, please cite the following paper: "Watch This Space: Securing Satellite Communication through Resilient Transmitter Fingerprinting".
 The BibTeX entry is given below:
