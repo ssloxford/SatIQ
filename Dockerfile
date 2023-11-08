@@ -13,9 +13,11 @@ RUN pip3 install pandas keras h5py zmq
 RUN pip3 install tqdm
 RUN pip3 install tensorflow-datasets
 
-RUN pip install tensorflow-addons==0.13.0
+RUN pip install tensorflow-addons
 
 RUN pip install scipy
+RUN pip install scikit-learn
+RUN pip install notebook
 
 RUN pip install seaborn
 

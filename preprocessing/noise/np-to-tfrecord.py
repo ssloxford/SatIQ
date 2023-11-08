@@ -3,37 +3,20 @@ import numpy as np
 import os
 import tensorflow as tf
 
-path_base = "/data"
-path_in = os.path.join(path_base, "filtered")
-path_out = os.path.join(path_base, "tfrecord-magnitude")
-
-suffixes = ["a", "b", "c"]
-
-chunk_size = 50000
-shuffle = True
+import argparse
 
 # Percentages to keep
-magnitude_percentages = [
-    10,
-    20,
-    30,
-    40,
-    50,
-    60,
-    70,
-    80,
-    90
-]
+magnitude_percentages = list(range(10, 100, 10))
 
 # Get a unique ID for the given id/cell pair
 def get_id_cell(sat_id, sat_cell, num_cells=63):
     return (sat_id * num_cells) + sat_cell
 
 def load_dataset(path, suffix):
-    file_samples = os.path.join(path, "samples-{}.npy".format(suffix))
-    file_ids = os.path.join(path, "ids-{}.npy".format(suffix))
-    file_cells = os.path.join(path, "cells-{}.npy".format(suffix))
-    file_magnitudes = os.path.join(path, "magnitudes-{}.npy".format(suffix))
+    file_samples = os.path.join(path, "samples_{}.npy".format(suffix))
+    file_ids = os.path.join(path, "ra_sat_{}.npy".format(suffix))
+    file_cells = os.path.join(path, "ra_cell_{}.npy".format(suffix))
+    file_magnitudes = os.path.join(path, "magnitudes_{}.npy".format(suffix))
 
     samples_array = np.load(file_samples)
     ids_array = np.load(file_ids)
@@ -64,6 +47,10 @@ def save_dataset(path, suffix, samples_array, ids_array, cells_array):
 def save_dataset_batches(path, chunk_size, samples_array, ids_array, cells_array, verbose):
     chunk_count = 0
 
+    # Create directory if it doesn't exist
+    if not os.path.exists(path):
+        os.makedirs(path)
+
     while samples_array.shape[0] >= chunk_size:
         if verbose:
             print(f"Saving chunk {chunk_count}...")
@@ -81,13 +68,14 @@ def save_dataset_batches(path, chunk_size, samples_array, ids_array, cells_array
         save_dataset(path, str(chunk_count), s, i, c)
         chunk_count += 1
 
-    if verbose:
-        print(f"Saving chunk {chunk_count}...")
-        print(f"Samples remaining: {samples_array.shape[0]}")
-    save_dataset(path, str(chunk_count), samples_array, ids_array, cells_array)
-    chunk_count += 1
+    if samples_array.shape[0] > 0:
+        if verbose:
+            print(f"Saving chunk {chunk_count}...")
+            print(f"Samples remaining: {samples_array.shape[0]}")
+        save_dataset(path, str(chunk_count), samples_array, ids_array, cells_array)
+        chunk_count += 1
 
-def process_all(chunk_size=50000, verbose=False):
+def process_all(chunk_size, path_in, path_out, max_files=None, skip_files=0, verbose=False, shuffle=True):
     samples_array = None
     ids_array = None
     cells_array = None
@@ -95,6 +83,16 @@ def process_all(chunk_size=50000, verbose=False):
 
     message_count = 0
 
+    # Check path_in for files of the form samples_{suffix}.npy
+    suffixes = [ f for f in os.listdir(path_in) if f.startswith("samples_") and f.endswith(".npy") ]
+    suffixes.sort()
+    suffixes = [ f[8:-4] for f in suffixes ]
+    suffixes = suffixes[skip_files:]
+    if max_files is not None:
+        suffixes = suffixes[:max_files]
+
+    if verbose:
+        print("Loading data...")
     for suffix in tqdm(suffixes, disable=not verbose):
         s, i, c, m = load_dataset(path_in, suffix)
         message_count += s.shape[0]
@@ -164,4 +162,21 @@ def process_all(chunk_size=50000, verbose=False):
             print(f"Done")
 
 if __name__ == "__main__":
-    process_all(chunk_size=chunk_size, verbose=True)
+    path_base = "/data"
+    path_in = path_base
+    path_out = os.path.join(path_base, "tfrecord")
+
+    parser = argparse.ArgumentParser(description="Process NumPy files into TFRecord datasets.")
+    parser.add_argument("--chunk-size", type=int, default=50000, help="Number of records in each chunk.")
+    parser.add_argument("--path-in", type=str, default=path_in, help="Input directory.")
+    parser.add_argument("--path-out", type=str, default=path_out, help="Output directory.")
+    parser.add_argument("--max-files", type=int, default=None, help="Maximum number of input files to process.")
+    parser.add_argument("--skip-files", type=int, default=0, help="Number of input files to skip.")
+    parser.add_argument("--no-shuffle", action='store_true', help="Do not shuffle data.")
+    parser.add_argument("-v", "--verbose", action='store_true', help="Display progress.")
+    args = parser.parse_args()
+
+    shuffle = not args.no_shuffle
+
+    process_all(args.chunk_size, args.path_in, args.path_out, args.max_files, args.skip_files, verbose=args.verbose, shuffle=shuffle)
+

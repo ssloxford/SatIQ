@@ -13,13 +13,13 @@ for db_index in db_indices:
 
     file_db = f"db-{db_index}.sqlite3"
 
-    file_samples = f"samples-{db_index}.npy"
-    file_ids = f"ids-{db_index}.npy"
-    file_cells = f"cells-{db_index}.npy"
-    file_magnitudes = f"magnitudes-{db_index}.npy"
-    file_noises = f"noises-{db_index}.npy"
-    file_levels = f"levels-{db_index}.npy"
-    file_confidences = f"confidences-{db_index}.npy"
+    file_samples = f"samples_{db_index}.npy"
+    file_ids = f"ra_sat_{db_index}.npy"
+    file_cells = f"ra_cell_{db_index}.npy"
+    file_magnitudes = f"magnitudes_{db_index}.npy"
+    file_noises = f"noises_{db_index}.npy"
+    file_levels = f"levels_{db_index}.npy"
+    file_confidences = f"confidences_{db_index}.npy"
 
     db = Database(os.path.join(path_base, file_db), num_samples)
 

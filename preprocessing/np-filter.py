@@ -11,18 +11,18 @@ out_dir = os.path.join(path_base, "filtered")
 suffixes = ["a", "b", "c"]
 
 def save_dataset(path, suffix, samples_array, ids_array, cells_array):
-    file_samples = os.path.join(path, "samples-{}.npy".format(suffix))
-    file_ids = os.path.join(path, "ids-{}.npy".format(suffix))
-    file_cells = os.path.join(path, "cells-{}.npy".format(suffix))
+    file_samples = os.path.join(path, "samples_{}.npy".format(suffix))
+    file_ids = os.path.join(path, "ra_sat_{}.npy".format(suffix))
+    file_cells = os.path.join(path, "ra_cell_{}.npy".format(suffix))
 
     np.save(file_samples, samples_array)
     np.save(file_ids, ids_array)
     np.save(file_cells, cells_array)
 
 def process(path_in, path_out, suffix):
-    file_samples = os.path.join(path_in, "samples-{}.npy".format(suffix))
-    file_ids = os.path.join(path_in, "ids-{}.npy".format(suffix))
-    file_cells = os.path.join(path_in, "cells-{}.npy".format(suffix))
+    file_samples = os.path.join(path_in, "samples_{}.npy".format(suffix))
+    file_ids = os.path.join(path_in, "ra_sat_{}.npy".format(suffix))
+    file_cells = os.path.join(path_in, "ra_cell_{}.npy".format(suffix))
 
     print("Loading ArrayDataset")
     ds = ArrayDataset.from_files(

@@ -53,9 +53,42 @@ tensorflow-datasets
 tensorflow-addons==0.13.0
 scipy
 seaborn
+scikit-learn
+notebook
 ```
 
 A GPU is recommended (with all necessary drivers installed), and a moderate amount of RAM will be required to run the data preproccessing and model training.
+
+
+### Downloading Data
+
+The full dataset is stored on Zenodo at the following URL: https://zenodo.org/record/8220494
+
+These can be downloaded from the site directly, but the following script may be preferable due to the large file size:
+```bash
+#!/bin/bash
+
+for i in $(seq -w 0 5 165); do
+  printf -v j "%03d" $((${i#0} + 4))
+  wget https://zenodo.org/records/8220494/files/data_${i}_${j}.tar.gz
+done
+```
+
+> [!WARNING]
+> These files are very large (4.0GB each, 135.4GB total).
+> Ensure you have enough disk space before downloading.
+
+To extract the files:
+```bash
+#!/bin/bash
+
+for i in $(seq -w 0 5 165); do
+  printf -v j "%03d" $((${i#0} + 4))
+  tar xzf data_${i}_${j}.tar.gz
+done
+```
+
+See the instructions below on processing the resulting files for use.
 
 
 ## Usage
@@ -101,8 +134,14 @@ Change the `docker-compose.yml` to ensure the device is mounted in the container
 The scripts in the `preprocessing` directory process the database file(s) into NumPy files, and then TFRecord datasets.
 It is recommended to run these scripts from within the TensorFlow container described above.
 
-Please note that these scripts load the full datasets into memory, and will consume large amounts of RAM.
-It is recommended that you run them on a machine with at least 128GB of RAM.
+> [!NOTE]
+> Converting databases to NumPy files and filtering is only necessary if you are doing your own data collection.
+> If the provided dataset on Zenodo is used, only the `np-to-tfrecord.py` script is needed.
+
+> [!IMPORTANT]
+> Please note that these scripts load the full datasets into memory, and will consume large amounts of RAM.
+> It is recommended that you run them on a machine with at least 128GB of RAM.
+
 
 #### db-to-np-multiple.py
 
@@ -116,6 +155,7 @@ python3 db-to-np-multiple.py
 
 The resulting files will be placed in `code/processed` (ensure this directory already exists).
 
+
 #### np-filter.py
 
 This script normalizes the IQ samples, and filters out unusable data.
@@ -128,20 +168,52 @@ python3 np-filter.py
 
 The resulting files will be placed in `code/filtered` (ensure this directory already exists).
 
+
 #### np-to-tfrecord.py
 
 This script converts NumPy files into the TFRecord format, for use in model training.
-To run, `path_base` and `suffixes` are once again set as above.
-The `chunk_size` `shuffle`, `by_id`, and `id_counts` options may also be set to adjust how the dataset is generated -- the default options should be fine, unless alternative datasets (e.g. with transmitters removed) are required.
+To run this script, ensure your data has been processed into NumPy files with the following format:
+- `samples_<suffix>.npy`
+- `ra_sat_<suffix>.npy`
+- `ra_cell_<suffix>.npy`
 
-The script runs with no arguments:
+> [!NOTE]
+> The `db-to-np-multiple.py` script will produce files in this format.
+> The dataset available from Zenodo is also in this format.
+
+The script can be used as follows:
 ```bash
-python3 np-filter.py
+python3 np-to-tfrecord.py --path-in <INPUT PATH> --path-out <OUTPUT PATH>
 ```
 
-The resulting files will be placed in `code/tfrecord` (ensure this directory already exists).
+There are also the following optional parameters:
+- `--chunk-size <CHUNK SIZE>`: number of records in each chunk. Default is 50000, set to a smaller value for smaller files.
+- `-v`, `--verbose`: display progress.
+- `--max-files <MAX FILES>`: stop after processing the specified number of input files.
+- `--skip-files <SKIP FILES>`: skip a specified number of input files.
+- `--no-shuffle`: do not shuffle the data.
+- `--by-id`: see below.
 
-Please note that this script in particular will use a large amount of RAM.
+The `by_id` option creates 9 datasets.
+The first of these contains only the most common 10% of transmitter IDs.
+The second contains 20%, and so on.
+Be careful using this option, as it creates a much larger number of files, and takes significantly longer to run.
+
+> [!WARNING]
+> This script in particular will use a large amount of RAM, since it loads the entire dataset into memory at once.
+> Processing may be done in batches by using the `--max-files` and `--skip-files` command-line arguments.
+
+
+#### sqlite3-compress.py
+
+This script converts database files directly into the NumPy arrays in the same format as provided in the Zenodo dataset.
+This includes all columns provided by the data collection pipeline.
+
+The script can be used as follows:
+```bash
+python3 sqlite3-compress.py <INPUT PATH> <OUTPUT PATH>
+```
+
 
 #### Noise
 

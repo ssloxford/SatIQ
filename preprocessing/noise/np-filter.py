@@ -11,13 +11,13 @@ out_dir = os.path.join(path_base, "filtered")
 suffixes = ["a", "b", "c"]
 
 def save_dataset(path, suffix, samples_array, ids_array, cells_array, magnitudes_array, noises_array, levels_array, confidences_array):
-    file_samples = os.path.join(path, "samples-{}.npy".format(suffix))
-    file_ids = os.path.join(path, "ids-{}.npy".format(suffix))
-    file_cells = os.path.join(path, "cells-{}.npy".format(suffix))
-    file_magnitudes = os.path.join(path, "magnitudes-{}.npy".format(suffix))
-    file_noises = os.path.join(path, "noises-{}.npy".format(suffix))
-    file_levels = os.path.join(path, "levels-{}.npy".format(suffix))
-    file_confidences = os.path.join(path, "confidences-{}.npy".format(suffix))
+    file_samples = os.path.join(path, "samples_{}.npy".format(suffix))
+    file_ids = os.path.join(path, "ra_sat_{}.npy".format(suffix))
+    file_cells = os.path.join(path, "ra_cell_{}.npy".format(suffix))
+    file_magnitudes = os.path.join(path, "magnitudes_{}.npy".format(suffix))
+    file_noises = os.path.join(path, "noises_{}.npy".format(suffix))
+    file_levels = os.path.join(path, "levels_{}.npy".format(suffix))
+    file_confidences = os.path.join(path, "confidences_{}.npy".format(suffix))
 
     np.save(file_samples, samples_array)
     np.save(file_ids, ids_array)
@@ -31,13 +31,13 @@ def save_dataset(path, suffix, samples_array, ids_array, cells_array, magnitudes
 def process(path_in, path_out, suffix):
     print("Processing dataset {}".format(suffix))
 
-    file_samples = os.path.join(path_in, "samples-{}.npy".format(suffix))
-    file_ids = os.path.join(path_in, "ids-{}.npy".format(suffix))
-    file_cells = os.path.join(path_in, "cells-{}.npy".format(suffix))
-    file_magnitudes = os.path.join(path_in, "magnitudes-{}.npy".format(suffix))
-    file_noises = os.path.join(path_in, "noises-{}.npy".format(suffix))
-    file_levels = os.path.join(path_in, "levels-{}.npy".format(suffix))
-    file_confidences = os.path.join(path_in, "confidences-{}.npy".format(suffix))
+    file_samples = os.path.join(path_in, "samples_{}.npy".format(suffix))
+    file_ids = os.path.join(path_in, "ra_sat_{}.npy".format(suffix))
+    file_cells = os.path.join(path_in, "ra_cell_{}.npy".format(suffix))
+    file_magnitudes = os.path.join(path_in, "magnitudes_{}.npy".format(suffix))
+    file_noises = os.path.join(path_in, "noises_{}.npy".format(suffix))
+    file_levels = os.path.join(path_in, "levels_{}.npy".format(suffix))
+    file_confidences = os.path.join(path_in, "confidences_{}.npy".format(suffix))
 
     print("Loading ArrayDataset")
     ds = NoiseArrayDataset.from_files(
