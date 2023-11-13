@@ -201,7 +201,27 @@ Be careful using this option, as it creates a much larger number of files, and t
 
 > [!WARNING]
 > This script in particular will use a large amount of RAM, since it loads the entire dataset into memory at once.
-> Processing may be done in batches by using the `--max-files` and `--skip-files` command-line arguments.
+> Processing may be done in batches by using the `--max-files` and `--skip-files` command-line arguments, or the script below.
+
+##### np-to-tfrecord-parallel.sh
+
+This script can run multiple instances of `np-to-tfrecord.py` in parallel, allowing preprocessing to be sped up and/or less RAM to be used.
+
+Usage:
+```bash
+np-to-tfrecord-parallel.sh <NUM PROCESSES> <FILES PER PROCESS> <INPUT PATH> <OUTPUT PATH>
+```
+Where:
+- `INPUT PATH` contains your `.npy` files, as above.
+- `OUTPUT PATH` is the desired output directory.
+- `NUM PROCESSES` is the number of CPU cores to use.
+- `FILES PER PROCESS` is the number of files each thread should load at once.
+
+Ensure that `NUM_PROCESSES * FILES_PER_PROCESS` input files can fit comfortably in RAM.
+
+> [!NOTE]
+> Shuffling is disabled by default in this script - if shuffled data is desired, the `--no-shuffle` flag should be removed from the script.
+> If this flag is removed, shuffling will only be done on a per-process level - that is, each process will shuffle the files it has loaded, but not the dataset as a whole.
 
 
 #### sqlite3-compress.py

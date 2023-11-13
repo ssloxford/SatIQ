@@ -42,7 +42,7 @@ def save_dataset(path, suffix, samples_array, ids_array, cells_array):
             }))
             writer.write(example.SerializeToString())
 
-def save_dataset_batches(path, chunk_size, samples_array, ids_array, cells_array, verbose):
+def save_dataset_batches(path, chunk_size, samples_array, ids_array, cells_array, verbose, skip_count=None):
     chunk_count = 0
 
     # Create directory if it doesn't exist
@@ -63,19 +63,21 @@ def save_dataset_batches(path, chunk_size, samples_array, ids_array, cells_array
         ids_array = ids_array[chunk_size:]
         cells_array = cells_array[chunk_size:]
 
-        save_dataset(path, str(chunk_count), s, i, c)
+        suffix = f"{skip_count}-{chunk_count}" if skip_count is not None else f"{chunk_count}"
+        save_dataset(path, suffix, s, i, c)
         chunk_count += 1
 
     if samples_array.shape[0] > 0:
         if verbose:
             print(f"Saving chunk {chunk_count}...")
             print(f"Samples remaining: {samples_array.shape[0]}")
-        save_dataset(path, str(chunk_count), samples_array, ids_array, cells_array)
+        suffix = f"{skip_count}-{chunk_count}" if skip_count is not None else f"{chunk_count}"
+        save_dataset(path, suffix, samples_array, ids_array, cells_array)
         chunk_count += 1
 
     return chunk_count
 
-def process_all(chunk_size, path_in, path_out, max_files=None, skip_files=0, verbose=False, shuffle=True, by_id=False):
+def process_all(chunk_size, path_in, path_out, max_files=None, skip_files=None, verbose=False, shuffle=True, by_id=False):
     samples_array = None
     ids_array = None
     cells_array = None
@@ -86,7 +88,8 @@ def process_all(chunk_size, path_in, path_out, max_files=None, skip_files=0, ver
     suffixes = [ f for f in os.listdir(path_in) if f.startswith("samples_") and f.endswith(".npy") ]
     suffixes.sort()
     suffixes = [ f[8:-4] for f in suffixes ]
-    suffixes = suffixes[skip_files:]
+    if skip_files is not None:
+        suffixes = suffixes[skip_files:]
     if max_files is not None:
         suffixes = suffixes[:max_files]
 
@@ -145,7 +148,7 @@ def process_all(chunk_size, path_in, path_out, max_files=None, skip_files=0, ver
                 if verbose:
                     print("Done")
 
-            save_dataset_batches(path_out_id, chunk_size, samples_array_unique_subset, ids_array_unique_subset, cells_array_unique_subset, verbose)
+            save_dataset_batches(path_out_id, chunk_size, samples_array_unique_subset, ids_array_unique_subset, cells_array_unique_subset, verbose, skip_count=skip_files)
 
             del samples_array_unique_subset
             del ids_array_unique_subset
@@ -180,7 +183,7 @@ def process_all(chunk_size, path_in, path_out, max_files=None, skip_files=0, ver
             if verbose:
                 print("Done")
 
-        save_dataset_batches(path_out_test, chunk_size, samples_array_unique_subset, ids_array_unique_subset, cells_array_unique_subset, verbose)
+        save_dataset_batches(path_out_test, chunk_size, samples_array_unique_subset, ids_array_unique_subset, cells_array_unique_subset, verbose, skip_count=skip_files)
 
         del samples_array_unique_subset
         del ids_array_unique_subset
@@ -200,7 +203,7 @@ def process_all(chunk_size, path_in, path_out, max_files=None, skip_files=0, ver
             if verbose:
                 print("Done")
 
-        chunk_count = save_dataset_batches(path_out, chunk_size, samples_array, ids_array, cells_array, verbose)
+        chunk_count = save_dataset_batches(path_out, chunk_size, samples_array, ids_array, cells_array, verbose, skip_count=skip_files)
 
         if verbose:
             print("Total messages: {}".format(message_count))
@@ -216,7 +219,7 @@ if __name__ == "__main__":
     parser.add_argument("--path-in", type=str, default=path_in, help="Input directory.")
     parser.add_argument("--path-out", type=str, default=path_out, help="Output directory.")
     parser.add_argument("--max-files", type=int, default=None, help="Maximum number of input files to process.")
-    parser.add_argument("--skip-files", type=int, default=0, help="Number of input files to skip.")
+    parser.add_argument("--skip-files", type=int, default=None, help="Number of input files to skip.")
     parser.add_argument("--no-shuffle", action='store_true', help="Do not shuffle data.")
     parser.add_argument("--by-id", action='store_true', help="Create datasets with different percentages of the most common IDs. WARNING: This will create a lot of datasets, and take a long time!")
     parser.add_argument("-v", "--verbose", action='store_true', help="Display progress.")
