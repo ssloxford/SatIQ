@@ -6,7 +6,7 @@ services:
             dockerfile: docker/database/Dockerfile
         volumes:
             - .:/code
-            - ../../data:/data
+            - ../data:/data
         network_mode: host
         extra_hosts:
           - "iridium_extractor:127.0.0.1"
