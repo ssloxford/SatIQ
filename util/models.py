@@ -1,10 +1,13 @@
-from .model_utils import Model, SiameseAccuracy
+from .model_utils import Model, SamplingLayer, MeanLoss
 
 import tensorflow as tf
-from tensorflow.keras import layers, models, metrics, losses
-from tensorflow.keras.callbacks import LambdaCallback
+from tensorflow.keras import layers, models, losses
 
-import tensorflow_addons as tfa
+try:
+    import tensorflow_addons as tfa
+except ImportError:
+    tfa = None
+    import tensorflow_similarity as tfsim
 
 class UpscalingLayer(layers.Layer):
     def __init__(self, out_shape):
@@ -21,7 +24,6 @@ class UpscalingLayer(layers.Layer):
             'out_shape': self.out_shape,
         })
         return config
-
 
 """
 A simple siamese model with convolutional layers, followed by a dense layer and a difference layer.
@@ -326,6 +328,19 @@ class SimpleTripletSplitConvModel(Model):
 
         model = models.Model(inputs=[input], outputs=[norm], name="model")
 
+        if tfa is not None:
+            loss = tfa.losses.TripletSemiHardLoss(
+                margin=triplet_margin,
+                distance_metric=triplet_distance_metric,
+            )
+        else:
+            loss = tfsim.losses.TripletLoss(
+                margin=triplet_margin,
+                distance=triplet_distance_metric,
+                positive_mining_strategy='hard',
+                negative_mining_strategy='semi-hard',
+            )
+
         model.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
             loss=tfa.losses.TripletSemiHardLoss(
@@ -375,61 +390,78 @@ class SimpleTripletSplitConvModel(Model):
         super().__init__(self.model, name, save_dir=save_dir)
 
 
-"""
-A simple siamese model with convolutional layers (split into separate IQ layers), followed by a dense layer.
-Triplet loss is used.
-"""
-class AETripletSplitConvModel(Model):
-    def build_model(self, input_len, feature_count, conv_layers, dense_size, learning_rate, triplet_margin, triplet_distance_metric, normalization):
-        """
-        Build the siamese model.
+def build_ae_triplet_model(
+        input_len,
+        feature_count,
+        conv_layers,
+        dense_size,
+        learning_rate,
+        triplet_margin,
+        triplet_distance_metric,
+        normalization='l2',
+        use_decoder=True,
+        new_decoder=True,
+        vae=False,
+        kl_weight=1.0,
+):
+    """
+    Build a siamese autoencoder model.
 
-        Args:
-            input_len (int): Length of the input vector.
-            feature_count (int): Number of features in the input vector.
-            conv_layers (list): List of tuples (filters, kernel_size) for each convolutional layer.
-            dense_size (int): Size of the dense layer.
-            learning_rate (float): Learning rate for the optimizer.
-            triplet_margin (float): Margin for the triplet loss.
-            triplet_distance_metric (str): Distance metric to use for the triplet loss. One of 'L2', 'squared-L2', 'angular', or a callable.
-            normalization (str): Normalization to use for the embeddings. One of 'L1', 'L2', None.
+    Args:
+        input_len (int): Length of the input vector.
+        feature_count (int): Number of features in the input vector.
+        conv_layers (list): List of tuples (filters, kernel_size) for each convolutional layer.
+        dense_size (int): Size of the dense layer.
+        learning_rate (float): Learning rate for the optimizer.
+        triplet_margin (float): Margin for the triplet loss.
+        triplet_distance_metric (str): Distance metric to use for the triplet loss. One of 'L2', 'squared-L2', 'angular', or a callable.
+        normalization (str): Normalization to use for the embeddings. One of 'L1', 'L2', None.
+        use_decoder (bool): Use the decoder. If set to false, the model will not be an autoencoder.
+        new_decoder (bool): Use the new layer architecture for the decoder.
+        vae (bool): Use a variational autoencoder instead of a traditional autoencoder.
+        kl_weight (float): Weight for the KL divergence loss.
+    """
+    input = layers.Input(shape=(input_len, feature_count), name="input")
+    input_norm = layers.BatchNormalization()(input)
+    input_padded = layers.ZeroPadding1D(padding=2)(input_norm)
 
-        Returns:
-            tf.keras.Model: The siamese model.
-        """
+    input_i, input_q = tf.split(input_padded, feature_count, axis=2)
 
-        input = layers.Input(shape=(input_len, feature_count), name="input")
-        input_norm = layers.BatchNormalization()(input)
-        input_padded = layers.ZeroPadding1D(padding=2)(input_norm)
+    conv_shapes = []
+    conv_i = [input_i]
+    conv_q = [input_q]
+    for i, (filters, kernel_size) in enumerate(conv_layers):
+        conv_shapes.append(conv_i[-1].get_shape().as_list()[1])
 
-        input_i, input_q = tf.split(input_padded, feature_count, axis=2)
+        conv_i.append(layers.Conv1D(filters, kernel_size, activation='relu', name="conv_i_{}".format(i))(conv_i[-1]))
+        conv_i.append(layers.MaxPooling1D()(conv_i[-1]))
 
-        conv_shapes = []
-        conv_i = [input_i]
-        conv_q = [input_q]
-        for i, (filters, kernel_size) in enumerate(conv_layers):
-            conv_shapes.append(conv_i[-1].get_shape().as_list()[1])
+        conv_q.append(layers.Conv1D(filters, kernel_size, activation='relu', name="conv_q_{}".format(i))(conv_q[-1]))
+        conv_q.append(layers.MaxPooling1D()(conv_q[-1]))
 
-            conv_i.append(layers.Conv1D(filters, kernel_size, activation='relu', name="conv_i_{}".format(i))(conv_i[-1]))
-            conv_i.append(layers.MaxPooling1D()(conv_i[-1]))
+    conv_out = layers.Concatenate(axis=2, name="conv_out")([conv_i[-1], conv_q[-1]])
 
-            conv_q.append(layers.Conv1D(filters, kernel_size, activation='relu', name="conv_q_{}".format(i))(conv_q[-1]))
-            conv_q.append(layers.MaxPooling1D()(conv_q[-1]))
+    flat = layers.Flatten()(conv_out)
 
-        conv_out = layers.Concatenate(axis=2, name="conv_out")([conv_i[-1], conv_q[-1]])
-
-        flat = layers.Flatten()(conv_out)
+    embedding = None
+    if not vae:
         dense = layers.Dense(dense_size, activation=None, name="dense")(flat)
-        norm = None
         if normalization == 'l1':
-            norm = layers.Lambda(lambda x: tf.linalg.normalize(x, ord=1, axis=1)[0], name="embedding")(dense)
+            embedding = layers.Lambda(lambda x: tf.linalg.normalize(x, ord=1, axis=1)[0], name="embedding")(dense)
         elif normalization == 'l2':
-            norm = layers.Lambda(lambda x: tf.math.l2_normalize(x, axis=1), name="embedding")(dense)
+            embedding = layers.Lambda(lambda x: tf.math.l2_normalize(x, axis=1), name="embedding")(dense)
         elif normalization is None:
-            norm = layers.Identity(name="embedding")(dense)
+            embedding = layers.Identity(name="embedding")(dense)
+    else:
+        dense = layers.Dense(dense_size, activation='relu', name="dense")(flat)
+        z_mean = layers.Dense(dense_size, name="z_mean")(dense)
+        z_log_var = layers.Dense(dense_size, name="z_log_var")(dense)
+        embedding = SamplingLayer(name="embedding")([z_mean, z_log_var])
+        kl = layers.Lambda(lambda x: -0.5 * tf.reduce_sum(1 + x[1] - tf.square(x[0]) - tf.exp(x[1]), axis=-1), name="kl")([z_mean, z_log_var])
 
+    if use_decoder:
         # Build the decoder
-        decoder_dense = layers.Dense(flat.get_shape().as_list()[1], activation='relu', name="decoder_dense")(norm)
+        decoder_dense = layers.Dense(flat.get_shape().as_list()[1], activation='relu', name="decoder_dense")(embedding)
         deconv_in = layers.Reshape(conv_out.get_shape().as_list()[1:])(decoder_dense)
         deconv_i, deconv_q = tf.split(deconv_in, feature_count, axis=2)
 
@@ -439,15 +471,17 @@ class AETripletSplitConvModel(Model):
             upscaling_shape = deconv_i[-1].get_shape().as_list()
             upscaling_shape[1] *= 2
 
-            #deconv_i.append(layers.UpSampling1D()(deconv_i[-1]))
-            #deconv_i.append(layers.Conv1DTranspose(filters, kernel_size, activation='relu', name="deconv_i_{}".format(i))(deconv_i[-1]))
             deconv_i.append(UpscalingLayer(upscaling_shape)(deconv_i[-1]))
-            deconv_i.append(layers.Conv1D(filters, kernel_size, activation='relu', name="deconv_i_{}".format(i))(deconv_i[-1]))
+            if new_decoder:
+                deconv_i.append(layers.Conv1DTranspose(filters, kernel_size, activation='relu', name="deconv_i_{}".format(i))(deconv_i[-1]))
+            else:
+                deconv_i.append(layers.Conv1D(filters, kernel_size, activation='relu', name="deconv_i_{}".format(i))(deconv_i[-1]))
 
-            #deconv_q.append(layers.UpSampling1D()(deconv_q[-1]))
-            #deconv_q.append(layers.Conv1DTranspose(filters, kernel_size, activation='relu', name="deconv_{}".format(i))(deconv_q[-1]))
             deconv_q.append(UpscalingLayer(upscaling_shape)(deconv_q[-1]))
-            deconv_q.append(layers.Conv1D(filters, kernel_size, activation='relu', name="deconv_q_{}".format(i))(deconv_q[-1]))
+            if new_decoder:
+                deconv_q.append(layers.Conv1DTranspose(filters, kernel_size, activation='relu', name="deconv_q_{}".format(i))(deconv_q[-1]))
+            else:
+                deconv_q.append(layers.Conv1D(filters, kernel_size, activation='relu', name="deconv_q_{}".format(i))(deconv_q[-1]))
 
             conv_shape = list(reversed(conv_shapes))[i]
             if deconv_i[-1].get_shape().as_list()[1] != conv_shape:
@@ -461,42 +495,92 @@ class AETripletSplitConvModel(Model):
         cropping = (output_concatenate.get_shape().as_list()[1] - input_len) // 2
         output = layers.Cropping1D(cropping=cropping, name="output")(output_concatenate)
 
+    outputs = [embedding, output] if use_decoder else [embedding]
 
-        model = models.Model(inputs=[input], outputs=[norm, output], name="model")
+    model = models.Model(inputs=[input], outputs=outputs, name="model")
 
-        #model.add_loss(tfa.losses.TripletSemiHardLoss(
-        #    margin=triplet_margin,
-        #    distance_metric=triplet_distance_metric,
-        #)(norm), name="embedding_loss")
+    if use_decoder:
         mse = tf.keras.losses.MeanSquaredError()(input, output)
         model.add_loss(mse)
         model.add_metric(mse, name="reconstruction_loss")
 
-        losses = {
-            "embedding": tfa.losses.TripletSemiHardLoss(
-                margin=triplet_margin,
-                distance_metric=triplet_distance_metric,
-            ),
-            # MSE between input and output
-            #"output": tf.keras.losses.MeanSquaredError()(input, output),
-        }
-        loss_weights = {
-            "embedding": 1.0,
-            #"output": 1.0,
-        }
+    if vae:
+        # Add mean of KL layer as a loss term
+        kl_loss = MeanLoss(name="kl_loss", weight=kl_weight)(input, kl)
+        model.add_loss(kl_loss)
+        model.add_metric(kl_loss, name="kl_loss")
 
-        model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
-            loss=losses,
-            loss_weights=loss_weights,
-            #loss=None,
-            metrics=[
-            ]
+    losses = {
+        "embedding": tfa.losses.TripletSemiHardLoss(
+            margin=triplet_margin,
+            distance_metric=triplet_distance_metric,
+        ),
+    }
+    loss_weights = {
+        "embedding": 1.0,
+    }
+
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
+        loss=losses,
+        loss_weights=loss_weights,
+        metrics=[
+        ]
+    )
+
+    return model
+
+"""
+A siamese model with an autoencoder architecture.
+"""
+class AETripletSplitConvModel(Model):
+    def __init__(self, name, input_len, feature_count, conv_layers, dense_size, learning_rate, triplet_margin=1.0, triplet_distance_metric='L2', normalization='L2', new_decoder=True, save_dir=None):
+        """
+        Initialize the siamese model.
+
+        Args:
+            name (str): Name of the model.
+            input_len (int): Length of the input vector.
+            feature_count (int): Number of features in the input vector.
+            conv_layers (list): List of tuples (filters, kernel_size) for each convolutional layer.
+            dense_size (int): Size of the dense layer.
+            learning_rate (float): Learning rate for the optimizer.
+            new_decoder (bool): Use the new layer architecture for the decoder.
+            triplet_margin (float): Margin for the triplet loss.
+            triplet_distance_metric (str): Distance metric to use for the triplet loss. One of 'L2', 'squared-L2', 'angular', or a callable.
+            normalization (str): Normalization to use for the embeddings. One of 'L1', 'L2', None.
+            save_dir (str): Directory to save the model to.
+        """
+
+        if feature_count != 2:
+            raise ValueError("This model currently only supports 2D input vectors (IQ samples).")
+
+        if normalization is not None:
+            normalization = normalization.lower()
+            if normalization not in ['l1', 'l2']:
+                raise ValueError("Invalid normalization: {}".format(normalization))
+
+        #self.model = self.build_model(input_len, feature_count, conv_layers, dense_size, learning_rate, triplet_margin, triplet_distance_metric, normalization, new_decoder)
+        self.model = build_ae_triplet_model(
+            input_len,
+            feature_count,
+            conv_layers,
+            dense_size,
+            learning_rate,
+            triplet_margin,
+            triplet_distance_metric,
+            normalization=normalization,
+            new_decoder=new_decoder,
         )
 
-        return model
+        super().__init__(self.model, name, save_dir=save_dir)
 
-    def __init__(self, name, input_len, feature_count, conv_layers, dense_size, learning_rate, triplet_margin=1.0, triplet_distance_metric='L2', normalization='L2', accuracy_threshold=0.5, save_dir=None):
+
+"""
+A siamese model with a variational autoencoder architecture.
+"""
+class VAETripletSplitConvModel(Model):
+    def __init__(self, name, input_len, feature_count, conv_layers, dense_size, learning_rate, triplet_margin=1.0, triplet_distance_metric='L2', kl_weight=1.0, save_dir=None):
         """
         Initialize the siamese model.
 
@@ -509,12 +593,50 @@ class AETripletSplitConvModel(Model):
             learning_rate (float): Learning rate for the optimizer.
             triplet_margin (float): Margin for the triplet loss.
             triplet_distance_metric (str): Distance metric to use for the triplet loss. One of 'L2', 'squared-L2', 'angular', or a callable.
-            normalization (str): Normalization to use for the embeddings. One of 'L1', 'L2', None.
-            accuracy_threshold (float): Accuracy threshold for the model's SiameseAccuracy metric.
+            kl_weight (float): Weight for the KL divergence loss.
             save_dir (str): Directory to save the model to.
         """
 
-        self.accuracy_threshold = accuracy_threshold
+        if feature_count != 2:
+            raise ValueError("This model currently only supports 2D input vectors (IQ samples).")
+
+        #self.model = self.build_model(input_len, feature_count, conv_layers, dense_size, learning_rate, triplet_margin, triplet_distance_metric, kl_weight)
+        self.model = build_ae_triplet_model(
+            input_len,
+            feature_count,
+            conv_layers,
+            dense_size,
+            learning_rate,
+            triplet_margin,
+            triplet_distance_metric,
+            vae=True,
+            kl_weight=kl_weight,
+        )
+
+        super().__init__(self.model, name, save_dir=save_dir)
+
+
+"""
+A siamese model without an autoencoder.
+"""
+class TripletSplitConvModel(Model):
+    def __init__(self, name, input_len, feature_count, conv_layers, dense_size, learning_rate, triplet_margin=1.0, triplet_distance_metric='L2', normalization='L2', save_dir=None):
+        """
+        Initialize the siamese model.
+
+        Args:
+            name (str): Name of the model.
+            input_len (int): Length of the input vector.
+            feature_count (int): Number of features in the input vector.
+            conv_layers (list): List of tuples (filters, kernel_size) for each convolutional layer.
+            dense_size (int): Size of the dense layer.
+            learning_rate (float): Learning rate for the optimizer.
+            new_decoder (bool): Use the new layer architecture for the decoder.
+            triplet_margin (float): Margin for the triplet loss.
+            triplet_distance_metric (str): Distance metric to use for the triplet loss. One of 'L2', 'squared-L2', 'angular', or a callable.
+            normalization (str): Normalization to use for the embeddings. One of 'L1', 'L2', None.
+            save_dir (str): Directory to save the model to.
+        """
 
         if feature_count != 2:
             raise ValueError("This model currently only supports 2D input vectors (IQ samples).")
@@ -524,6 +646,16 @@ class AETripletSplitConvModel(Model):
             if normalization not in ['l1', 'l2']:
                 raise ValueError("Invalid normalization: {}".format(normalization))
 
-        self.model = self.build_model(input_len, feature_count, conv_layers, dense_size, learning_rate, triplet_margin, triplet_distance_metric, normalization)
+        self.model = build_ae_triplet_model(
+            input_len,
+            feature_count,
+            conv_layers,
+            dense_size,
+            learning_rate,
+            triplet_margin,
+            triplet_distance_metric,
+            normalization=normalization,
+            use_decoder=False,
+        )
 
         super().__init__(self.model, name, save_dir=save_dir)

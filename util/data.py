@@ -28,6 +28,9 @@ class Database(Dataset):
         self.levels_array = None
         self.confidences_array = None
 
+        self.timestamps_array = None
+        self.positions_array = None
+
         self.cur.execute("SELECT count(*) FROM ira_messages")
         self.num_samples = self.cur.fetchall()[0][0]
 
@@ -91,25 +94,28 @@ class Database(Dataset):
 
     """
     Populate samples_array and ids_array with data from SQLite database.
-    Also populates arrays with magnitude, noise, level, and confidence values.
+    Also populates arrays with timestamp, position, magnitude, noise, level, and confidence values.
 
     Args:
         batch_size: number of samples to load at once (lower to save memory)
     """
-    def __generate_arrays_noise(self, batch_size=1000):
+    def generate_arrays_noise(self, batch_size=1000, verbose=False):
         if self.samples_array is not None and self.ids_array is not None:
             return
 
-        print("Generating arrays...")
+        if verbose:
+            print("Generating arrays...")
 
         # 3 way join iq_samples, ira_messages, bytes on id
-        self.cur.execute("SELECT iq_samples.samples, ira_messages.ra_sat, ira_messages.ra_cell, bytes.magnitude, bytes.noise, bytes.level, bytes.confidence FROM ira_messages JOIN iq_samples ON ira_messages.id = iq_samples.id JOIN bytes ON ira_messages.id = bytes.id WHERE ira_messages.ra_sat != 0")
+        self.cur.execute("SELECT iq_samples.samples, ira_messages.ra_sat, ira_messages.ra_cell, ira_messages.timestamp_global, ira_messages.ra_lat, ira_messages.ra_lon, ira_messages.ra_alt, bytes.magnitude, bytes.noise, bytes.level, bytes.confidence FROM ira_messages JOIN iq_samples ON ira_messages.id = iq_samples.id JOIN bytes ON ira_messages.id = bytes.id WHERE ira_messages.ra_sat != 0")
         num_samples = self.num_samples
 
         samples_list = []
         samples_arrays = []
         ids_list = []
         cells_list = []
+        timestamps_list = []
+        positions_list = []
         magnitudes_list = []
         noises_list = []
         levels_list = []
@@ -117,7 +123,7 @@ class Database(Dataset):
 
         count = 0
         elem = self.cur.fetchone()
-        with tqdm(total=num_samples) as pbar:
+        with tqdm(total=num_samples, disable=not verbose) as pbar:
             while elem is not None:
                 count += 1
 
@@ -126,10 +132,12 @@ class Database(Dataset):
 
                 ids_list.append(elem[1])
                 cells_list.append(elem[2])
-                magnitudes_list.append(elem[3])
-                noises_list.append(elem[4])
-                levels_list.append(elem[5])
-                confidences_list.append(elem[6])
+                timestamps_list.append(elem[3])
+                positions_list.append((elem[4], elem[5], elem[6]))
+                magnitudes_list.append(elem[7])
+                noises_list.append(elem[8])
+                levels_list.append(elem[9])
+                confidences_list.append(elem[10])
 
                 if count % batch_size == 0:
                     samples_arrays.append(np.stack(samples_list, axis=0))
@@ -146,6 +154,8 @@ class Database(Dataset):
         self.samples_array = np.concatenate(samples_arrays, axis=0)
         self.ids_array = np.array(ids_list)
         self.cells_array = np.array(cells_list)
+        self.timestamps_array = np.array(timestamps_list)
+        self.positions_array = np.array(positions_list)
         self.magnitudes_array = np.array(magnitudes_list)
         self.noises_array = np.array(noises_list)
         self.levels_array = np.array(levels_list)
@@ -381,7 +391,7 @@ class Database(Dataset):
         file_confidences: path to confidence file
     """
     def save_arrays_noise(self, file_samples, file_ids, file_cells, file_magnitudes, file_noises, file_levels, file_confidences):
-        self.__generate_arrays_noise()
+        self.generate_arrays_noise()
 
         np.save(file_samples, self.samples_array)
         np.save(file_ids, self.ids_array)
@@ -1059,11 +1069,12 @@ class TFRecordLoader():
             window_size (int): Size of the window to group samples by.
             batch_size (int): Size of the batches to group samples into.
         """
-        return ds.apply(tf.data.experimental.group_by_window(
+        #return ds.apply(tf.data.Dataset.group_by_window(
+        return ds.group_by_window(
             key_func=lambda x, y: y,
             reduce_func=lambda key, ds: ds.batch(window_size),
             window_size=window_size,
-        )).unbatch().batch(batch_size)
+        ).unbatch().batch(batch_size)
 
     @staticmethod
     def get_test_batch(ds, num_batches):
@@ -1090,3 +1101,115 @@ class TFRecordLoader():
         labels_test = np.concatenate(labels_test)
 
         return samples_test, labels_test
+
+
+class TFRecordLoaderFull():
+    @staticmethod
+    def _parse_example(example, num_samples=11000):
+        """
+        Parse a single example from a TFRecord file.
+        """
+
+        features = {
+            "sample": tf.io.FixedLenFeature([num_samples, 2], tf.float32),
+            "scale": tf.io.FixedLenFeature([2], tf.float32),
+            "id": tf.io.FixedLenFeature([], tf.int64),
+            "cell": tf.io.FixedLenFeature([], tf.int64),
+            "id_cell": tf.io.FixedLenFeature([], tf.int64),
+            "timestamp": tf.io.FixedLenFeature([], tf.int64),
+            "position": tf.io.FixedLenFeature([3], tf.float32),
+            "distance": tf.io.FixedLenFeature([], tf.float32),
+            "magnitude": tf.io.FixedLenFeature([], tf.float32),
+            "noise": tf.io.FixedLenFeature([], tf.float32),
+            "level": tf.io.FixedLenFeature([], tf.float32),
+            "confidence": tf.io.FixedLenFeature([], tf.int64),
+            "temp": tf.io.FixedLenFeature([], tf.float32),
+            "humidity": tf.io.FixedLenFeature([], tf.float32),
+            "precip": tf.io.FixedLenFeature([], tf.float32),
+            "cloudcover": tf.io.FixedLenFeature([], tf.float32),
+            "solarradiation": tf.io.FixedLenFeature([], tf.float32),
+        }
+        return tf.io.parse_single_example(example, features)
+
+    @staticmethod
+    def _features_to_input_output(features):
+        """
+        Convert the features dictionary to the input and output tensors.
+        """
+        return features['sample'], features['id_cell']
+
+    @classmethod
+    def _process_dataset(self, ds, all_features=False, shuffle=True, repeat=False, shuffle_buffer_sample=1000, seed=0, filter_predicate=None):
+        """
+        Process a TFRecord dataset by parsing the examples, shuffling, and converting to input/output tensors.
+        """
+
+        ds = ds.map(self._parse_example)
+
+        if filter_predicate is not None:
+            ds = ds.filter(filter_predicate)
+
+        if not all_features:
+            ds = ds.map(self._features_to_input_output)
+
+        if shuffle:
+            ds = ds.shuffle(shuffle_buffer_sample, seed=seed, reshuffle_each_iteration=True)
+
+        if repeat:
+            ds = ds.repeat()
+
+        return ds
+
+    @classmethod
+    def from_file(cls, file_in, **kwargs):
+        """
+        Load a single TFRecord file.
+
+        Args:
+            file_in (str): Path to the TFRecord file.
+            shuffle_buffer_sample (int): Size of the shuffle buffer for the samples.
+            seed (int): Seed for the random number generator.
+            use_id_only (bool): If True, use only the satellite ID as the output tensor, rather than the combined satellite and cell ID.
+        """
+        ds = tf.data.TFRecordDataset(file_in)
+        return cls._process_dataset(ds, **kwargs)
+
+    @classmethod
+    def from_files(cls, files_in, shuffle_buffer_file, cycle_length, seed, **kwargs):
+        """
+        Load a list of TFRecord files.
+
+        Args:
+            files_in (list): List of paths to the TFRecord files.
+            shuffle_buffer_file (int): Size of the shuffle buffer for the files.
+            cycle_length (int): Number of files to read in parallel.
+            shuffle_buffer_sample (int): Size of the shuffle buffer for the samples.
+            seed (int): Seed for the random number generator.
+            use_id_only (bool): If True, use only the satellite ID as the output tensor, rather than the combined satellite and cell ID.
+        """
+        ds = tf.data.Dataset.from_tensor_slices(files_in).shuffle(
+            shuffle_buffer_file,
+            seed=seed,
+            reshuffle_each_iteration=True,
+        ).interleave(
+            lambda x: tf.data.TFRecordDataset(x),
+            cycle_length=cycle_length,
+            num_parallel_calls=tf.data.AUTOTUNE,
+        )
+        return cls._process_dataset(ds, seed=seed, **kwargs)
+
+    @staticmethod
+    def window_batch(ds, window_size, batch_size):
+        """
+        Group samples by their ID then further group them into batches.
+
+        Args:
+            ds (tf.data.Dataset): Dataset to group.
+            window_size (int): Size of the window to group samples by.
+            batch_size (int): Size of the batches to group samples into.
+        """
+        return ds.group_by_window(
+            key_func=lambda x, y: y,
+            reduce_func=lambda key, ds: ds.batch(window_size),
+            window_size=window_size,
+        ).unbatch().batch(batch_size)

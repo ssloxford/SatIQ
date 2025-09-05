@@ -1,5 +1,4 @@
-#FROM tensorflow/tensorflow:latest
-FROM tensorflow/tensorflow:latest-gpu
+FROM tensorflow/tensorflow:2.10.1-gpu
 
 # avoid questions when installing things in apt-get
 ARG DEBIAN_FRONTEND=noninteractive
@@ -20,5 +19,7 @@ RUN pip install scikit-learn
 RUN pip install notebook
 
 RUN pip install seaborn
+
+RUN pip install --upgrade "protobuf<=3.20.1"
 
 WORKDIR /
